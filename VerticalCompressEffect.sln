@@ -1,0 +1,25 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28010.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{dbf12048-8b0a-4bc3-84df-6bd2a32c8471}") = "VerticalCompressEffect", "VerticalCompressEffect\VerticalCompressEffect.csproj", "{3e186610-ffd5-4d4f-b58e-aedc744d34a2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3e186610-ffd5-4d4f-b58e-aedc744d34a2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3e186610-ffd5-4d4f-b58e-aedc744d34a2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3e186610-ffd5-4d4f-b58e-aedc744d34a2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3e186610-ffd5-4d4f-b58e-aedc744d34a2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {fc9e340e-5f4a-4089-b956-15683433505d}
+	EndGlobalSection
+EndGlobal
