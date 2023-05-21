@@ -117,7 +117,8 @@ namespace VerticalCompressEffect
 			MinHorizontalSpace,
 			StaffLineLength,
 			MinStaffSeparation,
-			Debug
+			FillFromBorder,
+			Debug,
 		}
 
 
@@ -132,6 +133,7 @@ namespace VerticalCompressEffect
 			props.Add(new Int32Property(PropertyNames.MinHorizontalSpace, 250, 1, 1000));
 			props.Add(new Int32Property(PropertyNames.StaffLineLength, 3000, 0, 10000));
 			props.Add(new Int32Property(PropertyNames.MinStaffSeparation, 100, 0, 1000));
+			props.Add(new BooleanProperty(PropertyNames.FillFromBorder, true));
 			props.Add(new BooleanProperty(PropertyNames.Debug, false));
 
 			return new PropertyCollection(props);
@@ -148,6 +150,7 @@ namespace VerticalCompressEffect
 			configUI.SetPropertyControlValue(PropertyNames.MinHorizontalSpace, ControlInfoPropertyNames.DisplayName, "Minimum Horizontal Space");
 			configUI.SetPropertyControlValue(PropertyNames.StaffLineLength, ControlInfoPropertyNames.DisplayName, "Staff Line Length");
 			configUI.SetPropertyControlValue(PropertyNames.MinStaffSeparation, ControlInfoPropertyNames.DisplayName, "Minimum Staff Separation");
+			configUI.SetPropertyControlValue(PropertyNames.FillFromBorder, ControlInfoPropertyNames.DisplayName, "Fill from Border");
 			configUI.SetPropertyControlValue(PropertyNames.Debug, ControlInfoPropertyNames.DisplayName, "Debug");
 
 			return configUI;
@@ -172,6 +175,7 @@ namespace VerticalCompressEffect
 			MinHorizSpace = newToken.GetProperty<Int32Property>(PropertyNames.MinHorizontalSpace).Value;
 			StaffLineLength = newToken.GetProperty<Int32Property>(PropertyNames.StaffLineLength).Value;
 			MinStaffSeparation = newToken.GetProperty<Int32Property>(PropertyNames.MinStaffSeparation).Value;
+			FillFromBorder = newToken.GetProperty<BooleanProperty>(PropertyNames.FillFromBorder).Value;
 			Debug = newToken.GetProperty<BooleanProperty>(PropertyNames.Debug).Value;
 
 			base.OnSetRenderInfo(newToken, dstArgs, srcArgs);
@@ -198,6 +202,7 @@ namespace VerticalCompressEffect
 		IntSliderControl MinHorizSpace = 350; // [0,1000] Minimum Horizontal Space
 		IntSliderControl StaffLineLength = 3000; // [0,10000] Staff Line Length
 		IntSliderControl MinStaffSeparation = 100; // [0,1000] Minimum Staff Separation
+		bool FillFromBorder = false;
 		bool Debug = false;
 		#endregion
 
@@ -577,9 +582,20 @@ namespace VerticalCompressEffect
 						++writeHead;
 					}
 				}
-				for (; writeHead < selection.Bottom; ++writeHead)
+				if (FillFromBorder)
 				{
-					dst[x, writeHead] = ColorBgra.White;
+					var borderColor = dst[x, writeHead - 1];
+					for (; writeHead < selection.Bottom; ++writeHead)
+					{
+						dst[x, writeHead] = borderColor;
+					}
+				}
+				else
+				{
+					for (; writeHead < selection.Bottom; ++writeHead)
+					{
+						dst[x, writeHead] = ColorBgra.White;
+					}
 				}
 				if (IsCancelRequested) return;
 			}
