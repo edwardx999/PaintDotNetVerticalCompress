@@ -1,39 +1,14 @@
 using System;
-using System.IO;
 using System.Linq;
-using System.Diagnostics;
 using System.Drawing;
-using System.Threading;
 using System.Reflection;
-using System.Drawing.Text;
-using System.Windows.Forms;
-using System.IO.Compression;
-using System.Drawing.Drawing2D;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
-using Registry = Microsoft.Win32.Registry;
-using RegistryKey = Microsoft.Win32.RegistryKey;
 using PaintDotNet;
 using PaintDotNet.Effects;
-using PaintDotNet.AppModel;
-using PaintDotNet.Clipboard;
 using PaintDotNet.IndirectUI;
-using PaintDotNet.Collections;
 using PaintDotNet.PropertySystem;
 using IntSliderControl = System.Int32;
-using CheckboxControl = System.Boolean;
-using ColorWheelControl = PaintDotNet.ColorBgra;
-using AngleControl = System.Double;
-using PanSliderControl = PaintDotNet.Pair<double, double>;
-using TextboxControl = System.String;
-using FilenameControl = System.String;
-using DoubleSliderControl = System.Double;
-using ListBoxControl = System.Byte;
-using RadioButtonControl = System.Byte;
-using ReseedButtonControl = System.Byte;
-using MultiLineTextboxControl = System.String;
-using RollControl = System.Tuple<double, double, double>;
 
 [assembly: AssemblyTitle("Vertical Compress plugin for Paint.NET")]
 [assembly: AssemblyDescription("Vertical Compress selected pixels")]
@@ -112,6 +87,7 @@ namespace VerticalCompressEffect
 		{
 			MinVertSpace,
 			MinHorizProt,
+			StraightHorizOnly,
 			MaxVertProt,
 			Bg,
 			MinHorizontalSpace,
@@ -124,17 +100,19 @@ namespace VerticalCompressEffect
 
 		protected override PropertyCollection OnCreatePropertyCollection()
 		{
-			List<Property> props = new List<Property>();
-
-			props.Add(new Int32Property(PropertyNames.MinVertSpace, 50, 1, 1000));
-			props.Add(new Int32Property(PropertyNames.MinHorizProt, 10, 1, 1000));
-			props.Add(new Int32Property(PropertyNames.MaxVertProt, 70, 1, 1000));
-			props.Add(new Int32Property(PropertyNames.Bg, 254, 0, 255));
-			props.Add(new Int32Property(PropertyNames.MinHorizontalSpace, 250, 1, 1000));
-			props.Add(new Int32Property(PropertyNames.StaffLineLength, 3000, 0, 10000));
-			props.Add(new Int32Property(PropertyNames.MinStaffSeparation, 100, 0, 1000));
-			props.Add(new BooleanProperty(PropertyNames.FillFromBorder, true));
-			props.Add(new BooleanProperty(PropertyNames.Debug, false));
+			var props = new List<Property>
+			{
+				new Int32Property(PropertyNames.MinVertSpace, 50, 1, 1000),
+				new Int32Property(PropertyNames.MinHorizProt, 10, 1, 1000),
+				new BooleanProperty(PropertyNames.StraightHorizOnly, false),
+				new Int32Property(PropertyNames.MaxVertProt, 70, 1, 1000),
+				new Int32Property(PropertyNames.Bg, 254, 0, 255),
+				new Int32Property(PropertyNames.MinHorizontalSpace, 250, 1, 1000),
+				new Int32Property(PropertyNames.StaffLineLength, 3000, 0, 10000),
+				new Int32Property(PropertyNames.MinStaffSeparation, 100, 0, 1000),
+				new BooleanProperty(PropertyNames.FillFromBorder, true),
+				new BooleanProperty(PropertyNames.Debug, false)
+			};
 
 			return new PropertyCollection(props);
 		}
@@ -145,6 +123,7 @@ namespace VerticalCompressEffect
 
 			configUI.SetPropertyControlValue(PropertyNames.MinVertSpace, ControlInfoPropertyNames.DisplayName, "Minimum Vertical Space");
 			configUI.SetPropertyControlValue(PropertyNames.MinHorizProt, ControlInfoPropertyNames.DisplayName, "Minimum Horizontal Protection");
+			configUI.SetPropertyControlValue(PropertyNames.StraightHorizOnly, ControlInfoPropertyNames.DisplayName, "Straight Horizontal Lines Only");
 			configUI.SetPropertyControlValue(PropertyNames.MaxVertProt, ControlInfoPropertyNames.DisplayName, "Maximum Vertical Protection");
 			configUI.SetPropertyControlValue(PropertyNames.Bg, ControlInfoPropertyNames.DisplayName, "Background");
 			configUI.SetPropertyControlValue(PropertyNames.MinHorizontalSpace, ControlInfoPropertyNames.DisplayName, "Minimum Horizontal Space");
@@ -170,6 +149,7 @@ namespace VerticalCompressEffect
 		{
 			MinVertSpace = newToken.GetProperty<Int32Property>(PropertyNames.MinVertSpace).Value;
 			MinHorizProt = newToken.GetProperty<Int32Property>(PropertyNames.MinHorizProt).Value;
+			StraightHorizOnly = newToken.GetProperty<BooleanProperty>(PropertyNames.StraightHorizOnly).Value;
 			MaxVertProt = newToken.GetProperty<Int32Property>(PropertyNames.MaxVertProt).Value;
 			Bg = newToken.GetProperty<Int32Property>(PropertyNames.Bg).Value;
 			MinHorizSpace = newToken.GetProperty<Int32Property>(PropertyNames.MinHorizontalSpace).Value;
@@ -197,6 +177,7 @@ namespace VerticalCompressEffect
 		#region UICode
 		IntSliderControl MinVertSpace = 50; // [0,1000] Minimum Vertical Space
 		IntSliderControl MinHorizProt = 10; // [0,1000] Minimum Horizontal Protection
+		bool StraightHorizOnly = false;
 		IntSliderControl MaxVertProt = 70; // [0,1000] Maximum Vertical Protection
 		IntSliderControl Bg = 254; // [0,255] Background
 		IntSliderControl MinHorizSpace = 350; // [0,1000] Minimum Horizontal Space
@@ -216,7 +197,7 @@ namespace VerticalCompressEffect
 		void Render(Surface dst, Surface src, Rectangle _rect)
 		{
 			// Delete any of these lines you don't need
-			Rectangle selection = EnvironmentParameters.GetSelection(src.Bounds).GetBoundsInt();
+			Rectangle selection = EnvironmentParameters.SelectionBounds;
 			const int dimLim = short.MaxValue;
 			if (selection.Height < Math.Max(3, MinVertSpace) || selection.Width < Math.Max(3, MinHorizSpace) || selection.Width > dimLim || selection.Height > dimLim)
 			{
@@ -257,15 +238,20 @@ namespace VerticalCompressEffect
 			}
 			// Arrays are row-column (y-x). Surface is x-y.
 			if (IsCancelRequested) return;
-			var pathCounts = new short[src.Height, src.Width]; // could be made smaller than Src, same to make math easier
+			// could be made smaller than Src, same to make math easier
+			var pathCounts = new short[src.Height, src.Width];
+			// source is represented by a 3 bit-set, each bit representing an offset of -1 to 1 from LSB to MSB
+			var pathCountSources = new byte[src.Height, src.Width];
 			#region Finding Horizontal Paths
 			{
+				// left to right, top to bottom
 				pixels.Sort((p1, p2) =>
 				{
 					int r = p1.X.CompareTo(p2.X);
 					return r != 0 ? r : p1.Y.CompareTo(p2.Y);
 				});
 				int iPixIdx = 0;
+				// Init all border pixels to 1 (pixels outside of list are 0)
 				for (; iPixIdx != pixels.Count; ++iPixIdx)
 				{
 					var pixel = pixels[iPixIdx];
@@ -276,25 +262,45 @@ namespace VerticalCompressEffect
 					pathCounts[pixel.Y, pixel.X] = 1;
 				}
 				if (IsCancelRequested) return;
+				// Trace paths to right
 				for (; iPixIdx != pixels.Count; ++iPixIdx)
 				{
 					var pixel = pixels[iPixIdx];
-					short pathCount;
-					if (pixel.Y <= selection.Top)
-					{
-						pathCount = Math.Max(pathCounts[pixel.Y - 1, pixel.X - 1], pathCounts[pixel.Y, pixel.X - 1]);
-					}
-					else if (pixel.Y >= selection.Height - 1)
-					{
-						pathCount = Math.Max(pathCounts[pixel.Y, pixel.X - 1], pathCounts[pixel.Y + 1, pixel.X - 1]);
-					}
-					else
-					{
-						pathCount = Math.Max(pathCounts[pixel.Y, pixel.X - 1], Math.Max(pathCounts[pixel.Y, pixel.X - 1], pathCounts[pixel.Y + 1, pixel.X - 1]));
+					byte sourceFlag = 0b010;
+					short pathCount = pathCounts[pixel.Y, pixel.X - 1];
+					if (!StraightHorizOnly) {
+						if (pixel.Y > selection.Top)
+						{
+							short upper = pathCounts[pixel.Y - 1, pixel.X - 1];
+							if (upper > pathCount)
+							{
+								pathCount = upper;
+								sourceFlag = 0b001;
+							}
+							else if (upper == pathCount)
+							{
+								sourceFlag |= 0b001;
+							}
+						}
+						if (pixel.Y < selection.Bottom - 1)
+						{
+							short lower = pathCounts[pixel.Y + 1, pixel.X - 1];
+							if (lower > pathCount)
+							{
+								pathCount = lower;
+								sourceFlag = 0b100;
+							}
+							else if (lower == pathCount)
+							{
+								sourceFlag |= 0b100;
+							}
+						}
 					}
 					pathCounts[pixel.Y, pixel.X] = (short)(pathCount + 1);
+					pathCountSources[pixel.Y, pixel.X] = sourceFlag;
 				}
 				if (IsCancelRequested) return;
+				// Trace back path so that all pixels on the path have the full path count
 				for (iPixIdx = pixels.Count; iPixIdx-- > 0;)
 				{
 					var pixel = pixels[iPixIdx];
@@ -302,11 +308,20 @@ namespace VerticalCompressEffect
 					{
 						continue;
 					}
-					short upper = pixel.Y <= selection.Top ? (short)0 : pathCounts[pixel.Y - 1, pixel.X + 1];
-					short middle = pathCounts[pixel.Y, pixel.X + 1];
-					short lower = pixel.Y >= selection.Bottom - 1 ? (short)0 : pathCounts[pixel.Y + 1, pixel.X + 1];
-					short self = pathCounts[pixel.Y, pixel.X];
-					pathCounts[pixel.Y, pixel.X] = Math.Max(upper, Math.Max(middle, Math.Max(lower, self)));
+					short pathCount = pathCounts[pixel.Y, pixel.X];
+					if ((pixel.Y > selection.Top) && (pathCount < pathCounts[pixel.Y - 1, pixel.X + 1]) && ((pathCountSources[pixel.Y - 1, pixel.X + 1] & 0b100) != 0))
+					{
+						pathCount = pathCounts[pixel.Y - 1, pixel.X + 1];
+					}
+					if ((pathCount < pathCounts[pixel.Y, pixel.X + 1]) && ((pathCountSources[pixel.Y, pixel.X + 1] & 0b010) != 0))
+					{
+						pathCount = pathCounts[pixel.Y, pixel.X + 1];
+					}
+					if ((pixel.Y < selection.Bottom - 1) && (pathCount < pathCounts[pixel.Y + 1, pixel.X + 1]) && ((pathCountSources[pixel.Y + 1, pixel.X + 1] & 0b001) != 0))
+					{
+						pathCount = pathCounts[pixel.Y + 1, pixel.X + 1];
+					}
+					pathCounts[pixel.Y, pixel.X] = pathCount;
 				}
 				if (IsCancelRequested) return;
 				pixels.RemoveAll(pixel =>
@@ -319,22 +334,24 @@ namespace VerticalCompressEffect
 					pathCounts[pixel.Y, pixel.X] = notSafe;
 					return false;
 				});
+				Array.Clear(pathCountSources);
 			}
 			#endregion
 			if (IsCancelRequested) return;
 			#region Protecting Small Clusters
 			foreach (var cluster in clusters)
 			{
-				if (cluster != largestCluster)
+				if (cluster == largestCluster)
 				{
-					foreach (var rect in cluster.Ranges)
+					continue;
+				}
+				foreach (var rect in cluster.Ranges)
+				{
+					for (int y = rect.Top; y < rect.Bottom; ++y)
 					{
-						for (int y = rect.Top; y < rect.Bottom; ++y)
+						for (int x = rect.Left; x < rect.Right; ++x)
 						{
-							for (int x = rect.Left; x < rect.Right; ++x)
-							{
-								pathCounts[y, x] = safe;
-							}
+							pathCounts[y, x] = safe;
 						}
 					}
 				}
@@ -363,10 +380,36 @@ namespace VerticalCompressEffect
 				for (; iPixIdx != pixels.Count; ++iPixIdx)
 				{
 					var pixel = pixels[iPixIdx];
-					short left = pixel.X <= selection.Left ? (short)0 : pathCounts[pixel.Y - 1, pixel.X - 1];
-					short middle = pathCounts[pixel.Y - 1, pixel.X];
-					short right = pixel.X >= selection.Right - 1 ? (short)0 : pathCounts[pixel.Y - 1, pixel.X + 1];
-					pathCounts[pixel.Y, pixel.X] = (short)(Math.Max((short)0, Math.Max(left, Math.Max(middle, right))) + 1);
+					byte sourceFlag = 0b010;
+					short pathCount = pathCounts[pixel.Y - 1, pixel.X];
+					if (pixel.X > selection.Left)
+					{
+						short left = pathCounts[pixel.Y - 1, pixel.X - 1];
+						if (left > pathCount)
+						{
+							pathCount = left;
+							sourceFlag = 0b001;
+						}
+						else if (left == pathCount)
+						{
+							sourceFlag |= 0b001;
+						}
+					}
+					if (pixel.X < selection.Right - 1)
+					{
+						short right = pathCounts[pixel.Y - 1, pixel.X + 1];
+						if (right > pathCount)
+						{
+							pathCount = right;
+							sourceFlag = 0b100;
+						}
+						else if (right == pathCount)
+						{
+							sourceFlag |= 0b100;
+						}
+					}
+					pathCounts[pixel.Y, pixel.X] = (short)(pathCount + 1);
+					pathCountSources[pixel.Y, pixel.X] = sourceFlag;
 				}
 				if (IsCancelRequested) return;
 				for (iPixIdx = pixels.Count; iPixIdx-- > 0;)
@@ -376,11 +419,20 @@ namespace VerticalCompressEffect
 					{
 						continue;
 					}
-					short left = pixel.X <= selection.Left ? (short)0 : pathCounts[pixel.Y + 1, pixel.X - 1];
-					short middle = pathCounts[pixel.Y - 1, pixel.X];
-					short right = pixel.X >= selection.Right - 1 ? (short)0 : pathCounts[pixel.Y + 1, pixel.X + 1];
-					short self = pathCounts[pixel.Y, pixel.X];
-					pathCounts[pixel.Y, pixel.X] = (short)(Math.Max((short)0, Math.Max(left, Math.Max(middle, right))) + 1);
+					short pathCount = pathCounts[pixel.Y, pixel.X];
+					if ((pixel.X > selection.Left) && (pathCount < pathCounts[pixel.Y + 1, pixel.X - 1]) && ((pathCountSources[pixel.Y + 1, pixel.X - 1] & 0b100) != 0))
+					{
+						pathCount = pathCounts[pixel.Y + 1, pixel.X - 1];
+					}
+					if ((pathCount < pathCounts[pixel.Y + 1, pixel.X]) && ((pathCountSources[pixel.Y + 1, pixel.X] & 0b010) != 0))
+					{
+						pathCount = pathCounts[pixel.Y + 1, pixel.X];
+					}
+					if ((pixel.X < selection.Right - 1) && (pathCount < pathCounts[pixel.Y + 1, pixel.X + 1]) && ((pathCountSources[pixel.Y + 1, pixel.X + 1] & 0b001) != 0))
+					{
+						pathCount = pathCounts[pixel.Y + 1, pixel.X + 1];
+					}
+					pathCounts[pixel.Y, pixel.X] = pathCount;
 				}
 				if (IsCancelRequested) return;
 				foreach (var pixel in pixels)
@@ -675,7 +727,7 @@ namespace VerticalCompressEffect
 		#region Cluster Code
 		static byte Brightness(ColorBgra c)
 		{
-			return (byte)(Math.Round(((float)c.R + c.G + c.B) / 3.0f));
+			return (byte)(((ulong)c.R + c.G + c.B) * c.A / 3.0 / 255.0 +  255 - c.A);
 		}
 		static List<Rectangle> FindRanges(Surface src, Rectangle rect, byte lower, byte upper)
 		{
